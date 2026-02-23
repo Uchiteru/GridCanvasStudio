@@ -11,7 +11,7 @@ import { Color } from '@tiptap/extension-color';
 import TurndownService from 'turndown';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeFile, readFile } from '@tauri-apps/plugin-fs';
+import { writeFile, readFile, mkdir, exists, readDir } from '@tauri-apps/plugin-fs';
 
 const GRID_SIZE = 40;
 const CANVAS_WIDTH = 3200;
@@ -2130,49 +2130,193 @@ export default function CanvasEditor() {
     }
   };
 
-  // ── JSON Save / Load ──
-  const saveProjectJson = async () => {
+  // ── JSON Canvas Save / Load ──
+  const exportCanvasDir = async () => {
     try {
-      const data = JSON.stringify(pages, null, 2);
-      const filePath = await save({
-        filters: [{ name: 'JSON File', extensions: ['json'] }],
-        defaultPath: 'canvas-project.json',
+      const selectedDir = await open({
+        directory: true,
+        multiple: false,
+        title: "保存先のフォルダを選択",
       });
-      if (filePath) {
-        const encoder = new TextEncoder();
-        await writeFile(filePath, encoder.encode(data));
+      if (!selectedDir) return;
+
+      const sep = selectedDir.includes('\\') ? '\\' : '/';
+      const assetsDir = selectedDir + sep + 'assets';
+
+      const hasAssets = await exists(assetsDir);
+      if (!hasAssets) {
+        await mkdir(assetsDir, { recursive: true });
       }
+
+      for (const page of pages) {
+        const jsonNodes = [];
+        for (const node of page.nodes) {
+          if (node.type === 'text' || node.type === 'table') {
+            jsonNodes.push({
+              id: node.id,
+              type: 'text',
+              text: node.text,
+              x: node.x,
+              y: node.y,
+              width: node.width,
+              height: node.height,
+              _gcs_type: node.type,
+              ...(node.title ? { _gcs_title: node.title } : {})
+            });
+          } else if (node.type === 'file' || node.type === 'image') {
+            let fileName = `${node.id}`;
+            if (node.type === 'file' && node.svg) {
+              fileName += '.svg';
+              const assetPath = assetsDir + sep + fileName;
+              const encoder = new TextEncoder();
+              await writeFile(assetPath, encoder.encode(node.svg));
+            } else if (node.imageData || node.file) {
+              const b64 = node.imageData || node.file;
+              const ext = b64.includes('image/jpeg') ? 'jpg' : b64.includes('image/gif') ? 'gif' : 'png';
+              fileName += `.${ext}`;
+
+              // Handle Data URI extracting carefully
+              let base64Data = b64;
+              if (b64.includes(",")) {
+                base64Data = b64.split(",")[1];
+              }
+              // Strip out any newlines or spaces that could cause atob to fail
+              base64Data = base64Data.replace(/[^A-Za-z0-9+/=]/g, "");
+
+              const binaryString = atob(base64Data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const assetPath = assetsDir + sep + fileName;
+              await writeFile(assetPath, bytes);
+            } else {
+              fileName += '.png';
+            }
+
+            jsonNodes.push({
+              id: node.id,
+              type: 'file',
+              file: `assets/${fileName}`,
+              x: node.x,
+              y: node.y,
+              width: node.width,
+              height: node.height,
+              _gcs_type: node.type,
+              ...(node.title ? { _gcs_title: node.title } : {})
+            });
+          }
+        }
+
+        const canvasObj = {
+          nodes: jsonNodes,
+          edges: []
+        };
+
+        const pageFileName = selectedDir + sep + `${page.name.replace(/[\\/:*?"<>|]/g, '_')}.canvas`;
+        const encoder = new TextEncoder();
+        await writeFile(pageFileName, encoder.encode(JSON.stringify(canvasObj, null, 2)));
+      }
+
+      alert("JSON Canvasフォルダへの出力が完了しました！");
     } catch (err) {
-      console.error("JSON save failed:", err);
-      alert("JSON保存に失敗しました:\n" + err);
+      console.error("Canvas export failed:", err);
+      alert("エクスポートに失敗しました:\n" + err);
     }
   };
 
-  const loadProjectJson = async () => {
+  const importCanvasDir = async () => {
     try {
-      const filePath = await open({
-        filters: [{ name: 'JSON File', extensions: ['json'] }],
+      const selectedDir = await open({
+        directory: true,
         multiple: false,
+        title: "読込対象のフォルダを選択",
       });
-      if (filePath) {
+      if (!selectedDir) return;
+
+      const sep = selectedDir.includes('\\') ? '\\' : '/';
+      const entries = await readDir(selectedDir);
+      const canvasFiles = entries.filter(e => e.name && e.name.endsWith('.canvas'));
+
+      if (canvasFiles.length === 0) {
+        alert("フォルダ内に .canvas ファイルが見つかりませんでした。");
+        return;
+      }
+
+      const loadedPages = [];
+      const decoder = new TextDecoder('utf-8');
+
+      for (const fileEntry of canvasFiles) {
+        const filePath = selectedDir + sep + fileEntry.name;
         const bytes = await readFile(filePath);
-        const decoder = new TextDecoder('utf-8');
         const text = decoder.decode(bytes);
-        const loaded = JSON.parse(text);
-        if (Array.isArray(loaded) && loaded.length > 0) {
-          setHistory({
-            past: [],
-            present: loaded,
-            future: [],
-          });
-          setActivePageId(loaded[0].id);
-        } else {
-          alert("有効なページデータが見つかりませんでした。");
+        const canvasData = JSON.parse(text);
+
+        const myNodes = [];
+        if (canvasData.nodes && Array.isArray(canvasData.nodes)) {
+          for (const n of canvasData.nodes) {
+            const internalNode = {
+              id: n.id,
+              type: n._gcs_type || n.type,
+              x: n.x,
+              y: n.y,
+              width: n.width,
+              height: n.height,
+              title: n._gcs_title || ""
+            };
+
+            if (n.type === 'text') {
+              internalNode.text = n.text;
+              if (!n._gcs_type && n.text && n.text.trim().startsWith('<table')) {
+                internalNode.type = 'table';
+              }
+            } else if (n.type === 'file' && n.file) {
+              const assetPath = selectedDir + sep + n.file.replace('/', sep);
+              try {
+                const assetBytes = await readFile(assetPath);
+                if (n.file.endsWith('.svg')) {
+                  internalNode.type = 'file';
+                  internalNode.svg = decoder.decode(assetBytes);
+                } else {
+                  internalNode.type = internalNode.type === 'file' ? 'image' : internalNode.type;
+                  const ext = n.file.split('.').pop().toLowerCase();
+                  const mime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png';
+                  const binaryArr = Array.from(assetBytes);
+                  let b64Str = "";
+                  for (let i = 0; i < binaryArr.length; i += 8192) {
+                    b64Str += String.fromCharCode.apply(null, binaryArr.slice(i, i + 8192));
+                  }
+                  const b64 = btoa(b64Str);
+                  internalNode.imageData = `data:${mime};base64,${b64}`;
+                  if (n._gcs_type === 'file') {
+                    internalNode.file = internalNode.imageData;
+                  }
+                }
+              } catch (e) {
+                console.error("Failed to load asset:", n.file);
+                if (n._gcs_type === 'file') {
+                  internalNode.svg = "<svg><text>Asset Error</text></svg>";
+                }
+              }
+            }
+            myNodes.push(internalNode);
+          }
         }
+
+        loadedPages.push({
+          id: genId("page"),
+          name: fileEntry.name.replace('.canvas', ''),
+          nodes: myNodes
+        });
+      }
+
+      if (loadedPages.length > 0) {
+        setHistory({ past: [], present: loadedPages, future: [] });
+        setActivePageId(loadedPages[0].id);
       }
     } catch (err) {
-      console.error("JSON load failed:", err);
-      alert("JSON読込に失敗しました:\n" + err);
+      console.error("Canvas import failed:", err);
+      alert("インポートに失敗しました:\n" + err);
     }
   };
 
@@ -2370,14 +2514,14 @@ export default function CanvasEditor() {
         <button onClick={exportToExcel} style={{ ...btnSecondary, marginRight: 8, borderColor: "#10b981", color: "#10b981" }}>
           Excel出力
         </button>
-        <button onClick={saveProjectJson} style={{ ...btnSecondary, marginRight: 4, borderColor: "#6366f1", color: "#6366f1" }}>
-          💾 保存
+        <button onClick={exportCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#6366f1", color: "#6366f1" }}>
+          💾 保存 (Canvas形式)
         </button>
-        <button onClick={loadProjectJson} style={{ ...btnSecondary, marginRight: 4, borderColor: "#f59e0b", color: "#f59e0b" }}>
-          📂 読込
+        <button onClick={importCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#f59e0b", color: "#f59e0b" }}>
+          📂 読込 (Canvas形式)
         </button>
         <button onClick={() => setShowJson(true)} style={btnPrimary}>
-          JSON出力
+          状態デバッグ
         </button>
       </div>
 
