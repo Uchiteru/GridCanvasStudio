@@ -11,9 +11,8 @@ import { Color } from '@tiptap/extension-color';
 import TurndownService from 'turndown';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeFile, readFile, mkdir, exists, readDir } from '@tauri-apps/plugin-fs';
-
-const GRID_SIZE = 40;
+import { readFile, writeFile, mkdir, exists, readDir } from '@tauri-apps/plugin-fs';
+import { snap, genId, GRID_SIZE } from './utils';
 const CANVAS_WIDTH = 3200;
 const CANVAS_HEIGHT = 2400;
 
@@ -37,14 +36,6 @@ const COLORS = {
   shadow: "rgba(0,0,0,0.08)",
 };
 
-function snap(v) {
-  return Math.round(v / GRID_SIZE) * GRID_SIZE;
-}
-
-let nodeIdCounter = 10;
-function genId(type) {
-  return `${type}-${++nodeIdCounter}`;
-}
 
 const INITIAL_NODES = [
   {
