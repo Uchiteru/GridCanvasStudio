@@ -1371,6 +1371,7 @@ export default function CanvasEditor() {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [isAutoReflow, setIsAutoReflow] = useState(true);
 
   const effectiveWidth = isA4Mode ? 800 : CANVAS_WIDTH;
   const effectiveHeight = isA4Mode ? 1120 : CANVAS_HEIGHT;
@@ -1380,6 +1381,71 @@ export default function CanvasEditor() {
   const panRef = useRef(null);
   const canvasRef = useRef(null);
   const clipboardRef = useRef(null);
+
+  // ── Push Reflow Helper ──
+  const resolvePushReflow = useCallback((originals, drafts) => {
+    let current = JSON.parse(JSON.stringify(drafts));
+    let movedThisRound = true;
+    let iterations = 0;
+    while (movedThisRound && iterations < 10) {
+      movedThisRound = false;
+      iterations++;
+
+      for (let i = 0; i < current.length; i++) {
+        for (let j = 0; j < current.length; j++) {
+          if (i === j) continue;
+          const a = current[i];
+          const b = current[j];
+
+          const intersectX = (a.x < b.x + b.width) && (a.x + a.width > b.x);
+          const intersectY = (a.y < b.y + b.height) && (a.y + a.height > b.y);
+
+          if (intersectX && intersectY) {
+            const origA = originals.find(o => o.id === a.id) || a;
+            const origB = originals.find(o => o.id === b.id) || b;
+
+            const margin = Math.min(origA.width, origA.height, GRID_SIZE) / 2;
+            const wasStrictRight = origB.x >= origA.x + origA.width - margin;
+            const wasStrictBelow = origB.y >= origA.y + origA.height - margin;
+
+            let pushed = false;
+            if (wasStrictRight && !wasStrictBelow) {
+              const newX = snap(a.x + a.width);
+              if (b.x !== newX) { b.x = newX; pushed = true; }
+            } else if (wasStrictBelow && !wasStrictRight) {
+              const newY = snap(a.y + a.height);
+              if (b.y !== newY) { b.y = newY; pushed = true; }
+            } else if (wasStrictRight && wasStrictBelow) {
+              const newX = snap(a.x + a.width);
+              if (b.x !== newX) { b.x = newX; pushed = true; }
+            } else {
+              const cAX = origA.x + origA.width / 2;
+              const cBX = origB.x + origB.width / 2;
+              const cAY = origA.y + origA.height / 2;
+              const cBY = origB.y + origB.height / 2;
+
+              if (cBX >= cAX && (cBX - cAX) >= Math.abs(cBY - cAY)) {
+                const newX = snap(a.x + a.width);
+                if (b.x !== newX) { b.x = newX; pushed = true; }
+              } else if (cBY >= cAY && (cBY - cAY) > Math.abs(cBX - cAX)) {
+                const newY = snap(a.y + a.height);
+                if (b.y !== newY) { b.y = newY; pushed = true; }
+              }
+            }
+            if (pushed) movedThisRound = true;
+          }
+        }
+      }
+    }
+
+    if (isA4Mode) {
+      current.forEach(n => {
+        n.x = Math.max(0, Math.min(n.x, effectiveWidth - n.width));
+        n.y = Math.max(0, Math.min(n.y, effectiveHeight - n.height));
+      });
+    }
+    return current;
+  }, [isA4Mode, effectiveWidth, effectiveHeight]);
 
   // ── Selection ──
   const handleSelect = useCallback((id, shift) => {
@@ -1438,6 +1504,7 @@ export default function CanvasEditor() {
         startMouseY: e.clientY,
         startW: node.width,
         startH: node.height,
+        originalNodes: JSON.parse(JSON.stringify(nodes)),
       };
     },
     [nodes, commitHistory]
@@ -1494,14 +1561,14 @@ export default function CanvasEditor() {
         );
       }
       if (resizeRef.current) {
-        const { id, startMouseX, startMouseY, startW, startH } = resizeRef.current;
+        const { id, startMouseX, startMouseY, startW, startH, originalNodes } = resizeRef.current;
         const dx = (e.clientX - startMouseX) / zoom;
         const dy = (e.clientY - startMouseY) / zoom;
         let newW = Math.max(GRID_SIZE, snap(startW + dx));
         let newH = Math.max(GRID_SIZE, snap(startH + dy));
 
-        setNodes((prev) =>
-          prev.map((n) => {
+        setNodes((prev) => {
+          let draftNodes = originalNodes.map((n) => {
             if (n.id === id) {
               let finalW = newW;
               let finalH = newH;
@@ -1511,10 +1578,14 @@ export default function CanvasEditor() {
               }
               return { ...n, width: finalW, height: finalH };
             }
-            return n;
-          }),
-          { recordHistory: false }
-        );
+            return { ...n };
+          });
+
+          if (isAutoReflow) {
+            draftNodes = resolvePushReflow(originalNodes, draftNodes);
+          }
+          return draftNodes;
+        }, { recordHistory: false });
       }
       if (panRef.current) {
         setPan({
@@ -1535,7 +1606,7 @@ export default function CanvasEditor() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [zoom, pan, isA4Mode, effectiveWidth, effectiveHeight, setNodes, nodes]);
+  }, [zoom, pan, isA4Mode, effectiveWidth, effectiveHeight, setNodes, nodes, isAutoReflow, resolvePushReflow]);
 
   // ── Zoom ──
   const handleWheel = useCallback(
@@ -1770,9 +1841,15 @@ export default function CanvasEditor() {
   }, []);
 
   const handleSaveEdit = useCallback((updated) => {
-    setNodes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+    setNodes((prev) => {
+      let draftNodes = prev.map((n) => (n.id === updated.id ? updated : n));
+      if (isAutoReflow) {
+        draftNodes = resolvePushReflow(prev, draftNodes);
+      }
+      return draftNodes;
+    });
     setEditingNode(null);
-  }, [setNodes]);
+  }, [setNodes, isAutoReflow, resolvePushReflow]);
 
   // ── Coordinate info & Selections ──
   const selectedNode = nodes.find((n) => selectedIds[0] === n.id);
@@ -2284,6 +2361,9 @@ export default function CanvasEditor() {
 
         <div style={{ width: 1, height: 24, background: COLORS.border, margin: "0 12px" }} />
 
+        <button onClick={() => setIsAutoReflow(!isAutoReflow)} style={{ ...btnSecondary, marginRight: 8, background: isAutoReflow ? COLORS.accentSoft : 'transparent', borderColor: isAutoReflow ? COLORS.accent : COLORS.border, color: isAutoReflow ? COLORS.accent : COLORS.textMuted }}>
+          自動リフロー
+        </button>
         <button onClick={() => setIsA4Mode(!isA4Mode)} style={{ ...btnSecondary, marginRight: 8, background: isA4Mode ? COLORS.accentSoft : 'transparent', borderColor: isA4Mode ? COLORS.accent : COLORS.border, color: isA4Mode ? COLORS.accent : COLORS.textMuted }}>
           A4モード
         </button>
