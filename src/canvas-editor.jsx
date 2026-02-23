@@ -2119,6 +2119,7 @@ export default function CanvasEditor() {
           gap: 8,
           flexShrink: 0,
           zIndex: 100,
+          overflowX: "auto",
         }}
       >
         {/* Logo */}
@@ -2496,6 +2497,8 @@ function ToolButton({ onClick, title, children }) {
         fontSize: 12,
         cursor: "pointer",
         transition: "all 0.1s",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
       }}
     >
       {children}
