@@ -1967,8 +1967,14 @@ export default function CanvasEditor() {
             });
           } else if (node.type === "file") {
             let b64 = null;
-            if (node.svg) {
-              b64 = await svgToPngBase64(node.svg, node.width, node.height);
+            try {
+              if (node.svg) {
+                b64 = await svgToPngBase64(node.svg, node.width, node.height);
+              } else if (node.file && node.file.startsWith("data:image")) {
+                b64 = node.file;
+              }
+            } catch (e) {
+              console.warn("Failed to encode SVG for file node", node.id, e);
             }
             excelNodes.push({
               row,
@@ -1977,11 +1983,20 @@ export default function CanvasEditor() {
               height_px: Math.max(GRID_SIZE, node.height),
               node_type: "file",
               text: null,
-              base64_image: b64,
+              base64_image: b64 || null,
               span_cols,
               span_rows,
             });
           } else if (node.type === "image") {
+            let b64 = null;
+            if (node.imageData && typeof node.imageData === 'string') {
+              if (node.imageData.startsWith("data:")) {
+                b64 = node.imageData;
+              } else {
+                // Assume raw base64, wrap it for safety
+                b64 = "data:image/png;base64," + node.imageData;
+              }
+            }
             excelNodes.push({
               row,
               col,
@@ -1989,7 +2004,7 @@ export default function CanvasEditor() {
               height_px: Math.max(GRID_SIZE, node.height),
               node_type: "image",
               text: null,
-              base64_image: node.imageData || null,
+              base64_image: b64 || null,
               span_cols,
               span_rows,
             });
@@ -2002,6 +2017,8 @@ export default function CanvasEditor() {
         });
       }
 
+      console.log("Exporting to Excel (to Rust backend):", exportPages);
+
       // Ask Rust to build the Excel file in memory
       const bytes = await invoke('generate_excel_file', {
         payload: {
@@ -2009,6 +2026,8 @@ export default function CanvasEditor() {
           grid_size: EXCEL_CELL_SIZE,
         }
       });
+
+      console.log("Received byte array from Rust:", bytes.length);
 
       // Prompt user for save location
       const filePath = await save({
@@ -2026,7 +2045,7 @@ export default function CanvasEditor() {
       }
     } catch (err) {
       console.error("Excel export failed:", err);
-      alert("Excel出力に失敗しました:\n" + err);
+      // alert("Excel出力に失敗しました:\n" + err);
     }
   };
 
@@ -2131,7 +2150,7 @@ export default function CanvasEditor() {
               letterSpacing: "-0.02em",
             }}
           >
-            Canvas to Excel
+            GridCanvasStudio
           </span>
         </div>
 

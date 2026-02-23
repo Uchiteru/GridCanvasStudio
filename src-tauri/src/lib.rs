@@ -113,16 +113,32 @@ pub mod cmd {
                         let parts: Vec<&str> = b64.split("base64,").collect();
                         let b64_data = if parts.len() == 2 { parts[1] } else { b64 };
                         
-                        if let Ok(img_data) = general_purpose::STANDARD.decode(b64_data) {
-                            if let Ok(image) = Image::new_from_buffer(&img_data) {
-                                let scale_x = (node.width_px as f64) / (image.width() as f64);
-                                let scale_y = (node.height_px as f64) / (image.height() as f64);
-                                
-                                let scale_x = if scale_x.is_infinite() || scale_x.is_nan() { 1.0 } else { scale_x };
-                                let scale_y = if scale_y.is_infinite() || scale_y.is_nan() { 1.0 } else { scale_y };
+                        println!("Processing image for row: {}, col: {}, b64 len: {}", node.row, node.col, b64_data.len());
+                        match general_purpose::STANDARD.decode(b64_data) {
+                            Ok(img_data) => {
+                                match Image::new_from_buffer(&img_data) {
+                                    Ok(image) => {
+                                        let scale_x = (node.width_px as f64) / (image.width() as f64);
+                                        let scale_y = (node.height_px as f64) / (image.height() as f64);
+                                        
+                                        let scale_x = if scale_x.is_infinite() || scale_x.is_nan() { 1.0 } else { scale_x };
+                                        let scale_y = if scale_y.is_infinite() || scale_y.is_nan() { 1.0 } else { scale_y };
 
-                                let image = image.set_scale_width(scale_x).set_scale_height(scale_y);
-                                worksheet.insert_image(node.row, node.col, &image).map_err(|e| e.to_string())?;
+                                        let image = image.set_scale_width(scale_x).set_scale_height(scale_y);
+                                        if let Err(e) = worksheet.insert_image(node.row, node.col, &image) {
+                                            println!("  -> insert_image failed: {:?}", e);
+                                            return Err(format!("insert_image failed: {}", e));
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("  -> Image::new_from_buffer failed: {:?}", e);
+                                        return Err(format!("Image::new_from_buffer failed: {}", e));
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("  -> base64 decode failed: {:?}", e);
+                                return Err(format!("base64 decode failed: {}", e));
                             }
                         }
                     }
@@ -130,7 +146,9 @@ pub mod cmd {
             }
         }
 
-        let buf = workbook.save_to_buffer().map_err(|e| e.to_string())?;
+        println!("Saving workbook to buffer...");
+        let buf = workbook.save_to_buffer().map_err(|e| format!("workbook.save_to_buffer failed: {}", e))?;
+        println!("Export successful, returning {} bytes", buf.len());
         Ok(buf)
     }
 }
