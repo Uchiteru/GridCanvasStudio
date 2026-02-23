@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "GridCanvasStudio",
-        "width": 1200,
+        "width": 1440,
         "height": 800,
         "resizable": true,
         "fullscreen": false
