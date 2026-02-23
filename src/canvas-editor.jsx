@@ -659,6 +659,8 @@ const btnPrimary = {
   fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
 };
 
 const btnSecondary = {
@@ -670,6 +672,8 @@ const btnSecondary = {
   fontFamily: "'IBM Plex Sans', sans-serif",
   fontSize: 12,
   cursor: "pointer",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
 };
 
 // ── Drawio Modal ─────────────────────────────────────────────────────────────
