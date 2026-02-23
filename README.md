@@ -1,7 +1,7 @@
 # GridCanvasStudio
 
 <p align="center">
-  <strong>PMO向け 無限キャンバス型ドキュメントエディタ</strong>
+  <strong>方眼紙のようにテキストや図表を自由にマッピングできる、グリッドベースのドキュメントエディタ</strong>
 </p>
 
 <p align="center">
@@ -9,6 +9,10 @@
 </p>
 
 ---
+
+---
+
+> 🤖 **Notice:** 本アプリケーションのコード、設計書、Readmeを含むすべての開発アセットは、AI（LLM）によって完全自動生成・構築されています。
 
 ## ✨ 特徴
 
