@@ -2130,6 +2130,64 @@ export default function CanvasEditor() {
     }
   };
 
+  // ── GCS Save / Load ──
+  const saveGcs = async () => {
+    try {
+      const gcsData = {
+        version: 1,
+        pages: pages
+      };
+      const jsonString = JSON.stringify(gcsData);
+
+      const filePath = await save({
+        filters: [{
+          name: 'GridCanvasStudio Project',
+          extensions: ['gcs']
+        }],
+        defaultPath: "project.gcs",
+      });
+
+      if (filePath) {
+        const encoder = new TextEncoder();
+        await writeFile(filePath, encoder.encode(jsonString));
+      }
+    } catch (err) {
+      console.error("GCS save failed:", err);
+      // alert("GCS保存に失敗しました:\n" + err);
+    }
+  };
+
+  const loadGcs = async () => {
+    try {
+      const filePath = await open({
+        filters: [{
+          name: 'GridCanvasStudio Project',
+          extensions: ['gcs']
+        }],
+        multiple: false,
+      });
+
+      if (!filePath) return;
+
+      const bytes = await readFile(filePath);
+      const decoder = new TextDecoder('utf-8');
+      const text = decoder.decode(bytes);
+      const data = JSON.parse(text);
+
+      if (data && data.pages && Array.isArray(data.pages)) {
+        setHistory({ past: [], present: data.pages, future: [] });
+        if (data.pages.length > 0) {
+          setActivePageId(data.pages[0].id);
+        }
+      } else {
+        alert("無効なGCSファイルです。");
+      }
+    } catch (err) {
+      console.error("GCS load failed:", err);
+      alert("GCS読込に失敗しました:\n" + err);
+    }
+  };
+
   // ── JSON Canvas Save / Load ──
   const exportCanvasDir = async () => {
     try {
@@ -2514,11 +2572,17 @@ export default function CanvasEditor() {
         <button onClick={exportToExcel} style={{ ...btnSecondary, marginRight: 8, borderColor: "#10b981", color: "#10b981" }}>
           Excel出力
         </button>
-        <button onClick={exportCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#6366f1", color: "#6366f1" }}>
-          💾 保存 (Canvas形式)
+        <button onClick={saveGcs} style={{ ...btnSecondary, marginRight: 4, borderColor: "#6366f1", color: "#6366f1" }}>
+          💾 GCS保存
         </button>
-        <button onClick={importCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#f59e0b", color: "#f59e0b" }}>
-          📂 読込 (Canvas形式)
+        <button onClick={loadGcs} style={{ ...btnSecondary, marginRight: 8, borderColor: "#f59e0b", color: "#f59e0b" }}>
+          📂 GCS読込
+        </button>
+        <button onClick={exportCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#9ca3af", color: "#4b5563" }}>
+          Obsidian用出力 (JSON Canvas)
+        </button>
+        <button onClick={importCanvasDir} style={{ ...btnSecondary, marginRight: 4, borderColor: "#9ca3af", color: "#4b5563" }}>
+          Obsidian用読込 (JSON Canvas)
         </button>
         <button onClick={() => setShowJson(true)} style={btnPrimary}>
           状態デバッグ
