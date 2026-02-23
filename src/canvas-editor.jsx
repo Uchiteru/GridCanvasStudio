@@ -966,9 +966,15 @@ function TemplateModal({ onSelect, onClose }) {
 function getAiSettings() {
   try {
     const raw = localStorage.getItem('ai_settings');
-    if (raw) return JSON.parse(raw);
-  } catch { }
-  return { apiKey: '', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!parsed.provider) parsed.provider = 'openai';
+      return parsed;
+    }
+  } catch (err) {
+    console.warn('Failed to parse ai_settings', err);
+  }
+  return { provider: 'openai', apiKey: '', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' };
 }
 
 function saveAiSettings(s) {
@@ -985,6 +991,35 @@ async function aiComplete(prompt, contextContent, isXml) {
     ? 'You are an assistant that modifies draw.io mxGraphModel XML. Return only the modified XML.'
     : 'You are an assistant that edits HTML content. Return only the modified HTML. Keep existing styles.';
 
+  if (settings.provider === 'gemini') {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${settings.model || 'gemini-2.5-flash'}:generateContent?key=${settings.apiKey}`;
+    const body = {
+      system_instruction: {
+        parts: [{ text: systemMsg }]
+      },
+      contents: [{
+        parts: [{ text: `Current content:\n${contextContent}\n\nInstruction: ${prompt}` }]
+      }],
+      generationConfig: {
+        temperature: 0.3
+      }
+    };
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Gemini APIエラー (${resp.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const data = await resp.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || contextContent;
+  }
+
   const body = {
     model: settings.model || 'gpt-4o-mini',
     messages: [
@@ -994,7 +1029,7 @@ async function aiComplete(prompt, contextContent, isXml) {
     temperature: 0.3,
   };
 
-  const resp = await fetch(settings.endpoint, {
+  const resp = await fetch(settings.endpoint || 'https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1014,7 +1049,24 @@ async function aiComplete(prompt, contextContent, isXml) {
 
 // ── AI Settings Modal ─────────────────────────────────────────────────────────
 function AiSettingsModal({ onClose }) {
-  const [settings, setSettings] = useState(getAiSettings);
+  const [settings, setSettings] = useState(() => {
+    const s = getAiSettings();
+    if (!s.provider) s.provider = 'openai';
+    return s;
+  });
+
+  const handleProviderChange = (e) => {
+    const provider = e.target.value;
+    const newSettings = { ...settings, provider };
+    if (provider === 'gemini') {
+      newSettings.model = 'gemini-2.5-flash';
+      newSettings.endpoint = ''; // unused for gemini
+    } else if (provider === 'openai') {
+      newSettings.model = 'gpt-4o-mini';
+      newSettings.endpoint = 'https://api.openai.com/v1/chat/completions';
+    }
+    setSettings(newSettings);
+  };
 
   const handleSave = () => {
     saveAiSettings(settings);
@@ -1037,15 +1089,30 @@ function AiSettingsModal({ onClose }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted }}>API エンドポイント</span>
-            <input
-              type="text"
-              value={settings.endpoint}
-              onChange={(e) => setSettings({ ...settings, endpoint: e.target.value })}
-              placeholder="https://api.openai.com/v1/chat/completions"
-              style={{ ...inputStyle, width: '100%', padding: '8px 12px', fontSize: 13 }}
-            />
+            <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted }}>プロバイダ</span>
+            <select
+              value={settings.provider}
+              onChange={handleProviderChange}
+              style={{ ...inputStyle, width: '100%', padding: '8px 12px', fontSize: 13, backgroundColor: COLORS.bg }}
+            >
+              <option value="openai">OpenAI互換 (ChatGPT, Claude等)</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="custom">カスタム</option>
+            </select>
           </label>
+
+          {(settings.provider === 'openai' || settings.provider === 'custom') && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted }}>API エンドポイント</span>
+              <input
+                type="text"
+                value={settings.endpoint}
+                onChange={(e) => setSettings({ ...settings, endpoint: e.target.value })}
+                placeholder="https://api.openai.com/v1/chat/completions"
+                style={{ ...inputStyle, width: '100%', padding: '8px 12px', fontSize: 13 }}
+              />
+            </label>
+          )}
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted }}>API キー</span>
@@ -1053,7 +1120,7 @@ function AiSettingsModal({ onClose }) {
               type="password"
               value={settings.apiKey}
               onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
-              placeholder="sk-..."
+              placeholder={settings.provider === 'gemini' ? "AIzaSy..." : "sk-..."}
               style={{ ...inputStyle, width: '100%', padding: '8px 12px', fontSize: 13 }}
             />
           </label>
@@ -1064,7 +1131,7 @@ function AiSettingsModal({ onClose }) {
               type="text"
               value={settings.model}
               onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-              placeholder="gpt-4o-mini"
+              placeholder={settings.provider === 'gemini' ? "gemini-2.5-flash" : "gpt-4o-mini"}
               style={{ ...inputStyle, width: '100%', padding: '8px 12px', fontSize: 13 }}
             />
           </label>
